@@ -52,25 +52,70 @@ class LeKiwi(Robot):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
-            port=self.config.port,
-            motors={
-                # arm
-                "arm_shoulder_pan": Motor(1, "sts3215", norm_mode_body),
-                "arm_shoulder_lift": Motor(2, "sts3215", norm_mode_body),
-                "arm_elbow_flex": Motor(3, "sts3215", norm_mode_body),
-                "arm_wrist_flex": Motor(4, "sts3215", norm_mode_body),
-                "arm_wrist_roll": Motor(5, "sts3215", norm_mode_body),
-                "arm_gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
-                # base
-                "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
-            },
-            calibration=self.calibration,
-        )
-        self.arm_motors = [motor for motor in self.bus.motors if motor.startswith("arm")]
-        self.base_motors = [motor for motor in self.bus.motors if motor.startswith("base")]
+
+        # Motor definitions
+        arm_motors_dict = {
+            "arm_shoulder_pan": Motor(1, "sts3215", norm_mode_body),
+            "arm_shoulder_lift": Motor(2, "sts3215", norm_mode_body),
+            "arm_elbow_flex": Motor(3, "sts3215", norm_mode_body),
+            "arm_wrist_flex": Motor(4, "sts3215", norm_mode_body),
+            "arm_wrist_roll": Motor(5, "sts3215", norm_mode_body),
+            "arm_gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
+        }
+        base_motors_dict = {
+            "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
+            "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
+            "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
+        }
+
+        if self.config.use_dual_boards:
+            # Dual board mode: separate buses for arm and base motors
+            arm_port = self.config.arm_port
+            base_port = self.config.base_port
+
+            # Auto-detect ports if not specified
+            if arm_port is None or base_port is None:
+                arm_port, base_port = self._detect_board_ports()
+
+            # Create separate buses
+            self.arm_bus = FeetechMotorsBus(
+                port=arm_port,
+                motors=arm_motors_dict,
+                calibration=self.calibration,
+            )
+            self.base_bus = FeetechMotorsBus(
+                port=base_port,
+                motors=base_motors_dict,
+                calibration=self.calibration,
+            )
+
+            # Create routing map for motor name -> bus
+            self.motor_bus_map = {}
+            for motor_name in arm_motors_dict:
+                self.motor_bus_map[motor_name] = self.arm_bus
+            for motor_name in base_motors_dict:
+                self.motor_bus_map[motor_name] = self.base_bus
+
+            # List of all buses
+            self.buses = [self.arm_bus, self.base_bus]
+
+            # For backwards compatibility, set self.bus to arm_bus
+            self.bus = self.arm_bus
+
+            logger.info(f"Initialized dual board mode: arm={arm_port}, base={base_port}")
+        else:
+            # Single board mode (backwards compatible)
+            all_motors = {**arm_motors_dict, **base_motors_dict}
+            self.bus = FeetechMotorsBus(
+                port=self.config.port,
+                motors=all_motors,
+                calibration=self.calibration,
+            )
+            self.buses = [self.bus]
+            self.motor_bus_map = {motor_name: self.bus for motor_name in all_motors}
+
+        self.arm_motors = list(arm_motors_dict.keys())
+        self.base_motors = list(base_motors_dict.keys())
         self.cameras = make_cameras_from_configs(config.cameras)
 
     def _detect_board_ports(self) -> tuple[str, str]:
