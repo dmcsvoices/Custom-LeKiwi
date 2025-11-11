@@ -198,13 +198,18 @@ class LeKiwi(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
+        buses_connected = all(bus.is_connected for bus in self.buses)
+        cameras_connected = all(cam.is_connected for cam in self.cameras.values())
+        return buses_connected and cameras_connected
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        self.bus.connect()
+        # Connect all buses (single or dual mode)
+        for bus in self.buses:
+            bus.connect()
+
         if not self.is_calibrated and calibrate:
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
@@ -219,7 +224,7 @@ class LeKiwi(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.bus.is_calibrated
+        return all(bus.is_calibrated for bus in self.buses)
 
     def calibrate(self) -> None:
         if self.calibration:
