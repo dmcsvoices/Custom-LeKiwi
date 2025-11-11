@@ -34,7 +34,12 @@ def lekiwi_cameras_config() -> dict[str, CameraConfig]:
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
 class LeKiwiConfig(RobotConfig):
-    port: str = "/dev/ttyACM0"  # port to connect to the bus
+    port: str = "/dev/ttyACM0"  # port to connect to the bus (used in single-board mode)
+
+    # Dual motor board configuration
+    use_dual_boards: bool = False  # Set to True to use two separate motor control boards
+    arm_port: str | None = None  # Port for arm motors (IDs 1-6). Auto-detected if None.
+    base_port: str | None = None  # Port for base motors (IDs 7-9). Auto-detected if None.
 
     disable_torque_on_disconnect: bool = True
 
