@@ -231,22 +231,30 @@ python -m lerobot.robots.lekiwi.lekiwi_host \
     --host.connection_time_s=600
 ```
 
-**Terminal 2 (Keyboard Control):**
+**Terminal 2 (Control Options):**
 
+**Xbox Controller (Recommended):**
+```bash
+pip install approxeng.input
+python examples/lekiwi/teleoperate_xbox_controller.py
+```
+- Analog joystick control
+- Speed boost/slow with triggers
+- See [full guide](examples/lekiwi/README_XBOX_CONTROLLER.md)
+
+**OR Keyboard:**
 ```bash
 python examples/lekiwi/teleoperate_keyboard_only.py
 ```
-
-Edit `ROBOT_IP` in the script:
-- Use `"localhost"` if running on the same machine
-- Use your robot's IP (e.g., `"192.168.1.100"`) if running remotely
-
-**Keyboard Controls:**
 - `w/s` - forward/backward
 - `a/d` - strafe left/right
 - `z/x` - rotate left/right
 - `r/f` - increase/decrease speed
 - `q` - quit
+
+Edit `ROBOT_IP` in either script:
+- Use `"localhost"` if running on the same machine
+- Use your robot's IP (e.g., `"192.168.1.100"`) if running remotely
 
 ---
 
@@ -300,15 +308,31 @@ python -m lerobot.robots.lekiwi.lekiwi_host \
 
 **On Your Laptop:**
 
-For keyboard-only control (testing base motors):
+**Option 1: Xbox Controller (Recommended)**
+```bash
+# Install controller support
+pip install approxeng.input
+
+# Run Xbox controller teleoperation
+python examples/lekiwi/teleoperate_xbox_controller.py
+```
+- Analog control with joysticks
+- Speed boost/slow mode with triggers
+- Emergency stop with B button
+- See [Xbox Controller Guide](examples/lekiwi/README_XBOX_CONTROLLER.md) for full documentation
+
+**Option 2: Keyboard**
 ```bash
 python examples/lekiwi/teleoperate_keyboard_only.py
 ```
+- Digital control (WASD + ZX for rotation)
+- Good for testing without controller
 
-For full arm + base control with SO100 leader arm:
+**Option 3: Full Arm + Base (SO100 Leader)**
 ```bash
 python examples/lekiwi/teleoperate.py
 ```
+- Requires SO100 leader arm for full control
 
 ### Configuration Options
 
