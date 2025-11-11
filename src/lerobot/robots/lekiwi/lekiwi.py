@@ -371,10 +371,27 @@ class LeKiwi(Robot):
             self.bus.enable_torque()
 
     def setup_motors(self) -> None:
-        for motor in chain(reversed(self.arm_motors), reversed(self.base_motors)):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        if self.config.use_dual_boards:
+            # Dual board mode: setup arm and base motors separately
+            print(f"\n=== ARM BOARD SETUP ===")
+            print(f"Connect controller to ARM board at {self.arm_bus.port}")
+            for motor in reversed(self.arm_motors):
+                input(f"Connect the '{motor}' motor only and press enter.")
+                self.arm_bus.setup_motor(motor)
+                print(f"'{motor}' motor id set to {self.arm_bus.motors[motor].id}")
+
+            print(f"\n=== BASE BOARD SETUP ===")
+            print(f"Connect controller to BASE board at {self.base_bus.port}")
+            for motor in reversed(self.base_motors):
+                input(f"Connect the '{motor}' motor only and press enter.")
+                self.base_bus.setup_motor(motor)
+                print(f"'{motor}' motor id set to {self.base_bus.motors[motor].id}")
+        else:
+            # Single board mode (backwards compatible)
+            for motor in chain(reversed(self.arm_motors), reversed(self.base_motors)):
+                input(f"Connect the controller board to the '{motor}' motor only and press enter.")
+                self.bus.setup_motor(motor)
+                print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
     @staticmethod
     def _degps_to_raw(degps: float) -> int:
