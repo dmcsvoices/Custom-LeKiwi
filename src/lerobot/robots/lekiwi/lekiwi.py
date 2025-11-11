@@ -73,6 +73,53 @@ class LeKiwi(Robot):
         self.base_motors = [motor for motor in self.bus.motors if motor.startswith("base")]
         self.cameras = make_cameras_from_configs(config.cameras)
 
+    def _detect_board_ports(self) -> tuple[str, str]:
+        """
+        Auto-detect which serial port has the arm board vs the base board.
+
+        Strategy:
+        - Try to ping Motor ID 1 (arm_shoulder_pan) on each candidate port
+        - The port that responds to Motor ID 1 is the arm board
+        - The other port is the base board
+
+        Returns:
+            tuple[str, str]: (arm_port, base_port)
+
+        Raises:
+            RuntimeError: If auto-detection fails
+        """
+        candidate_ports = ["/dev/ttyACM0", "/dev/ttyACM1"]
+        logger.info("Auto-detecting motor control board ports...")
+
+        for port in candidate_ports:
+            try:
+                # Create a minimal bus with just one test motor to ping
+                norm_mode_body = MotorNormMode.DEGREES if self.config.use_degrees else MotorNormMode.RANGE_M100_100
+                test_bus = FeetechMotorsBus(
+                    port=port,
+                    motors={"test_motor": Motor(1, "sts3215", norm_mode_body)},
+                    calibration=None,
+                )
+                test_bus.connect()
+
+                # Try to ping motor ID 1 (arm_shoulder_pan)
+                if test_bus.ping(1):
+                    arm_port = port
+                    base_port = [p for p in candidate_ports if p != port][0]
+                    test_bus.disconnect()
+                    logger.info(f"Detected arm board at {arm_port}, base board at {base_port}")
+                    return arm_port, base_port
+
+                test_bus.disconnect()
+            except Exception as e:
+                logger.debug(f"Failed to detect on port {port}: {e}")
+                continue
+
+        raise RuntimeError(
+            "Could not auto-detect motor control boards. Please specify ports manually using "
+            "--robot.arm_port and --robot.base_port"
+        )
+
     @property
     def _state_ft(self) -> dict[str, type]:
         return dict.fromkeys(
