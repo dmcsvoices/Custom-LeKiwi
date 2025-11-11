@@ -441,8 +441,12 @@ class LeKiwi(Robot):
 
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
-        arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
-        base_wheel_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
+        if self.config.use_dual_boards:
+            arm_pos = self.arm_bus.sync_read("Present_Position", self.arm_motors)
+            base_wheel_vel = self.base_bus.sync_read("Present_Velocity", self.base_motors)
+        else:
+            arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
+            base_wheel_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
 
         base_vel = self._wheel_raw_to_body(
             base_wheel_vel["base_left_wheel"],
@@ -492,20 +496,30 @@ class LeKiwi(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position", self.arm_motors)
+            if self.config.use_dual_boards:
+                present_pos = self.arm_bus.sync_read("Present_Position", self.arm_motors)
+            else:
+                present_pos = self.bus.sync_read("Present_Position", self.arm_motors)
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in arm_goal_pos.items()}
             arm_safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
             arm_goal_pos = arm_safe_goal_pos
 
         # Send goal position to the actuators
         arm_goal_pos_raw = {k.replace(".pos", ""): v for k, v in arm_goal_pos.items()}
-        self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
-        self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
+        if self.config.use_dual_boards:
+            self.arm_bus.sync_write("Goal_Position", arm_goal_pos_raw)
+            self.base_bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
+        else:
+            self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
+            self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
 
         return {**arm_goal_pos, **base_goal_vel}
 
     def stop_base(self):
-        self.bus.sync_write("Goal_Velocity", dict.fromkeys(self.base_motors, 0), num_retry=5)
+        if self.config.use_dual_boards:
+            self.base_bus.sync_write("Goal_Velocity", dict.fromkeys(self.base_motors, 0), num_retry=5)
+        else:
+            self.bus.sync_write("Goal_Velocity", dict.fromkeys(self.base_motors, 0), num_retry=5)
         logger.info("Base motors stopped")
 
     def disconnect(self):
@@ -513,7 +527,11 @@ class LeKiwi(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         self.stop_base()
-        self.bus.disconnect(self.config.disable_torque_on_disconnect)
+
+        # Disconnect all buses
+        for bus in self.buses:
+            bus.disconnect(self.config.disable_torque_on_disconnect)
+
         for cam in self.cameras.values():
             cam.disconnect()
 
