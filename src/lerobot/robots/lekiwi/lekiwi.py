@@ -234,9 +234,10 @@ class LeKiwi(Robot):
             )
             if user_input.strip().lower() != "c":
                 logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
-                # Write calibration to all buses
+                # Write calibration to all buses - filter for motors each bus knows about
                 for bus in self.buses:
-                    bus.write_calibration(self.calibration)
+                    bus_calibration = {k: v for k, v in self.calibration.items() if k in bus.motors}
+                    bus.write_calibration(bus_calibration)
                 return
         logger.info(f"\nRunning calibration of {self}")
 
@@ -287,9 +288,11 @@ class LeKiwi(Robot):
                     range_max=range_maxes[name],
                 )
 
-            # Write calibration to both buses
-            self.arm_bus.write_calibration(self.calibration)
-            self.base_bus.write_calibration(self.calibration)
+            # Write calibration to both buses - filter for motors each bus knows about
+            arm_calibration = {k: v for k, v in self.calibration.items() if k in self.arm_bus.motors}
+            self.arm_bus.write_calibration(arm_calibration)
+            base_calibration = {k: v for k, v in self.calibration.items() if k in self.base_bus.motors}
+            self.base_bus.write_calibration(base_calibration)
         else:
             # Single board mode (backwards compatible)
             self.bus.disable_torque(self.arm_motors)
