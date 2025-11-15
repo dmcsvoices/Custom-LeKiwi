@@ -19,7 +19,7 @@ Xbox Controller teleoperation script for LeKiwi robot base control.
 No leader arm required - just Xbox controller for the base.
 
 Requirements:
-    pip install approxeng.input
+    None (uses evdev which is typically pre-installed)
 
 Usage:
     1. On the robot, run:
@@ -54,8 +54,10 @@ Notes:
 """
 
 import time
+import struct
+import glob
 
-from approxeng.input.selectbinder import ControllerResource
+from evdev import InputDevice, ecodes, list_devices
 
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.utils.robot_utils import busy_wait
@@ -69,8 +71,157 @@ BASE_LINEAR_VEL = 0.5   # m/s - base translation speed
 BASE_ANGULAR_VEL = 50.0  # deg/s - base rotation speed
 
 # Controller settings
-DEADZONE = 0.1  # Ignore stick values below this threshold (prevents drift)
+DEADZONE = 0.08  # Ignore stick values below this threshold (prevents drift)
 # ==========================
+
+
+class XboxController:
+    """Xbox controller wrapper using evdev for reliable input detection."""
+
+    def __init__(self, device_path=None):
+        """Initialize Xbox controller.
+
+        Args:
+            device_path: Path to the controller device (e.g., /dev/input/js0)
+                        If None, will auto-detect Xbox controller
+        """
+        self.device = None
+        self.name = "Xbox Controller"
+        self.connected = True
+
+        if device_path is None:
+            # Auto-detect Xbox controller
+            device_path = self._find_xbox_controller()
+
+        if device_path:
+            try:
+                self.device = InputDevice(device_path)
+                self.name = self.device.name
+                print(f"✓ Connected to: {self.name}")
+            except Exception as e:
+                print(f"Error opening device {device_path}: {e}")
+                raise
+        else:
+            raise IOError("No Xbox controller found")
+
+        # Initialize state
+        self.analog_state = {
+            'ABS_X': 0,      # Left stick X (strafe)
+            'ABS_Y': 0,      # Left stick Y (forward/backward)
+            'ABS_RX': 0,     # Right stick X (rotate)
+            'ABS_RY': 0,     # Right stick Y (not used)
+            'ABS_Z': 0,      # Left trigger
+            'ABS_RZ': 0,     # Right trigger
+        }
+        self.button_state = {}
+
+    @staticmethod
+    def _find_xbox_controller():
+        """Auto-detect Xbox controller from available input devices."""
+        for device_path in list_devices():
+            try:
+                device = InputDevice(device_path)
+                name = device.name.lower()
+                # Check for Xbox controller indicators
+                if 'xbox' in name or 'wireless controller' in name:
+                    # Verify it has the expected axes
+                    if hasattr(device, 'capabilities'):
+                        caps = device.capabilities()
+                        if ecodes.EV_ABS in caps:
+                            print(f"Found controller: {device.name} at {device_path}")
+                            return device_path
+            except Exception:
+                pass
+        return None
+
+    def read_input(self, timeout=0.01):
+        """Read and process input events from the controller.
+
+        Args:
+            timeout: Timeout in seconds for reading events. Set low to prevent blocking
+                    during reconnection attempts while still capturing all queued events.
+        """
+        import select
+
+        try:
+            # Use select with timeout for non-blocking reads
+            # This reads all available events without hanging on reconnection
+            rlist, _, _ = select.select([self.device], [], [], timeout)
+
+            if rlist:
+                # Events are available, read them all
+                for event in self.device.read():
+                    if event.type == ecodes.EV_ABS:
+                        # Analog input (sticks, triggers)
+                        axis_name = ecodes.ABS[event.code]
+                        # Normalize to 0.0 to 1.0 range for triggers, -1.0 to 1.0 for sticks
+                        if axis_name in ['ABS_Z', 'ABS_RZ']:
+                            # Triggers: 0 to 1023
+                            self.analog_state[axis_name] = max(0.0, event.value / 1023.0)
+                        else:
+                            # Sticks: -32768 to 32767
+                            self.analog_state[axis_name] = event.value / 32768.0
+
+                    elif event.type == ecodes.EV_KEY:
+                        # Button input
+                        button_name = ecodes.BTN[event.code]
+                        # Handle case where button_name might be a list
+                        if isinstance(button_name, list):
+                            button_name = button_name[0] if button_name else f"BTN_{event.code}"
+                        self.button_state[button_name] = event.value
+
+        except (IOError, OSError) as e:
+            self.connected = False
+            raise
+
+    def debug_print_state(self):
+        """Print current controller state for debugging."""
+        return f"LX:{self.lx:.2f} LY:{self.ly:.2f} RX:{self.rx:.2f} LT:{self.lt:.2f} RT:{self.rt:.2f}"
+
+    @property
+    def lx(self):
+        """Left stick X (strafe)."""
+        return self.analog_state.get('ABS_X', 0.0)
+
+    @property
+    def ly(self):
+        """Left stick Y (forward/backward)."""
+        return self.analog_state.get('ABS_Y', 0.0)
+
+    @property
+    def rx(self):
+        """Right stick X (rotate)."""
+        return self.analog_state.get('ABS_RX', 0.0)
+
+    @property
+    def ry(self):
+        """Right stick Y."""
+        return self.analog_state.get('ABS_RY', 0.0)
+
+    @property
+    def lt(self):
+        """Left trigger."""
+        return max(0.0, self.analog_state.get('ABS_Z', 0.0))
+
+    @property
+    def rt(self):
+        """Right trigger."""
+        return max(0.0, self.analog_state.get('ABS_RZ', 0.0))
+
+    @property
+    def button_b(self):
+        """B button (circle on some controllers)."""
+        return self.button_state.get('BTN_NORTH', 0)
+
+    @property
+    def button_select(self):
+        """Back/Select button."""
+        return self.button_state.get('BTN_SELECT', 0) or self.button_state.get('BTN_BACK', 0)
+
+    @property
+    def button_start(self):
+        """Start button."""
+        return self.button_state.get('BTN_START', 0)
 
 
 def controller_to_base_action(joystick, current_speed_multiplier=1.0):
@@ -78,7 +229,7 @@ def controller_to_base_action(joystick, current_speed_multiplier=1.0):
     Convert Xbox controller input to LeKiwi base action.
 
     Args:
-        joystick: approxeng.input controller object
+        joystick: XboxController object
         current_speed_multiplier: Current speed multiplier (1.0 = normal)
 
     Returns:
@@ -124,9 +275,15 @@ def main():
     robot = LeKiwiClient(robot_config)
 
     print("Connecting to robot...")
+    print(f"  IP: {ROBOT_IP}")
     # To connect you should already have the host running on LeKiwi:
     # python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi --robot.use_dual_boards=true --host.connection_time_s=600
-    robot.connect()
+    try:
+        robot.connect()
+        print("✓ Connected to robot")
+    except Exception as e:
+        print(f"✗ Failed to connect: {e}")
+        raise
 
     if not robot.is_connected:
         raise ValueError("Robot is not connected!")
@@ -148,63 +305,101 @@ def main():
 
     current_speed = 1.0
     emergency_stopped = False
+    joystick = None
+    last_reconnect_attempt = time.time()
 
     try:
         while True:
-            # Connect to controller (supports Xbox, PlayStation, etc.)
+            # Connect to controller
             try:
-                with ControllerResource() as joystick:
-                    print(f"\n✓ Connected to: {joystick.name}")
+                if joystick is None:
+                    # Prevent rapid reconnection attempts (min 2 seconds between attempts)
+                    time_since_last = time.time() - last_reconnect_attempt
+                    if time_since_last < 2.0:
+                        time.sleep(2.0 - time_since_last)
+
+                    last_reconnect_attempt = time.time()
+                    joystick = XboxController()
                     print("Ready to control! Use Back/Select to quit.\n")
 
-                    # Main control loop
-                    while joystick.connected:
-                        t0 = time.perf_counter()
+                # Main control loop
+                while joystick and joystick.connected:
+                    t0 = time.perf_counter()
 
-                        # Get robot observation
+                    # Read controller input FIRST (important: non-blocking)
+                    try:
+                        joystick.read_input()
+                    except IOError:
+                        print("\n⚠ Controller disconnected!")
+                        joystick = None
+                        break
+
+                    # Get robot observation (this may block, so do it after reading controller)
+                    try:
                         observation = robot.get_observation()
+                    except Exception as e:
+                        print(f"\n⚠ Robot observation error: {e}")
+                        joystick = None
+                        break
 
-                        # Check for button presses
-                        joystick.check_presses()
+                    # Back/Select button = quit
+                    if joystick.button_select:
+                        print("\n✓ Back/Select pressed - quitting...")
+                        return
 
-                        # Back/Select button = quit
-                        if joystick.presses.select or joystick.presses.start:
-                            if joystick.presses.select:
-                                print("\n✓ Back/Select pressed - quitting...")
-                                return
-                            elif joystick.presses.start:
-                                print(f"Current speed multiplier: {current_speed:.2f}x")
+                    # Start button = show speed
+                    if joystick.button_start:
+                        state = joystick.debug_print_state()
+                        print(f"Speed: {current_speed:.2f}x | State: {state}")
 
-                        # B button = emergency stop
-                        if joystick.presses.circle:  # 'B' on Xbox (circle in standard naming)
-                            emergency_stopped = not emergency_stopped
-                            if emergency_stopped:
-                                print("⚠ EMERGENCY STOP ACTIVATED - Press B to release")
-                            else:
-                                print("✓ Emergency stop released")
-
-                        # Convert controller input to action
+                    # B button = emergency stop
+                    if joystick.button_b:
+                        emergency_stopped = not emergency_stopped
                         if emergency_stopped:
-                            # Send zeros if emergency stopped
-                            action = {
-                                "x.vel": 0.0,
-                                "y.vel": 0.0,
-                                "theta.vel": 0.0,
-                            }
-                            current_speed = 0.0
+                            print("⚠ EMERGENCY STOP ACTIVATED - Press B to release")
                         else:
-                            action, current_speed = controller_to_base_action(joystick)
+                            print("✓ Emergency stop released")
 
-                        # Send action to robot
-                        _ = robot.send_action(action)
+                    # Convert controller input to action
+                    if emergency_stopped:
+                        # Send zeros if emergency stopped
+                        action = {
+                            "x.vel": 0.0,
+                            "y.vel": 0.0,
+                            "theta.vel": 0.0,
+                        }
+                        current_speed = 0.0
+                    else:
+                        action, current_speed = controller_to_base_action(joystick)
 
-                        # Maintain loop frequency
-                        busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+                    # Send action to robot
+                    result = robot.send_action(action)
 
-                    print("\n⚠ Controller disconnected! Reconnecting...")
+                    # Debug: Print if any command is being sent
+                    if action["x.vel"] != 0 or action["y.vel"] != 0 or action["theta.vel"] != 0:
+                        if time.time() - getattr(controller_to_base_action, '_last_print', 0) > 0.5:
+                            print(f"Sent: x={action['x.vel']:.3f}, y={action['y.vel']:.3f}, theta={action['theta.vel']:.1f} | Result: {result}")
+                            controller_to_base_action._last_print = time.time()
 
-            except IOError:
-                print("⚠ No controller found. Make sure your Xbox controller is connected.")
+                    # Maintain loop frequency
+                    busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+
+                if joystick is None:
+                    print("⚠ No controller found. Make sure your Xbox controller is connected.")
+                    print("  Retrying in 2 seconds...")
+
+                    # Send zero velocities while waiting
+                    action = {
+                        "x.vel": 0.0,
+                        "y.vel": 0.0,
+                        "theta.vel": 0.0,
+                    }
+                    robot.send_action(action)
+
+                    time.sleep(2)
+
+            except IOError as e:
+                print(f"⚠ Controller error: {e}")
                 print("  Retrying in 2 seconds...")
 
                 # Send zero velocities while waiting
@@ -215,6 +410,7 @@ def main():
                 }
                 robot.send_action(action)
 
+                joystick = None
                 time.sleep(2)
 
     except KeyboardInterrupt:
