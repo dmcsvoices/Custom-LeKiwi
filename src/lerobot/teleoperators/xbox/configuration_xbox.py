@@ -35,8 +35,8 @@ class XboxTeleopConfig(TeleoperatorConfig):
     base_angular_vel: float = 90.0  # deg/s - base rotation speed
 
     # Arm movement increments (applied per control loop)
-    arm_speed: float = 0.05  # radians per control loop for joint movements
-    gripper_speed: float = 0.05  # gripper command increment
+    arm_speed: float = 1.0  # radians per control loop for joint movements (much faster)
+    gripper_speed: float = 0.2  # gripper command increment (faster too)
 
     # Stick scaling for proportional control
     stick_scale: float = 1.0  # Scale factor for stick deflection

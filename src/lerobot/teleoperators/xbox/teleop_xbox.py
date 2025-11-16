@@ -76,15 +76,16 @@ class XboxTeleop(Teleoperator):
         self.pygame = None
         self._is_connected = False
 
-        # Arm state tracking
+        # Arm state tracking - initialize to None, will be set from robot observation
         self.arm_positions = {
-            "arm_shoulder_pan": 0.0,
-            "arm_shoulder_lift": 0.0,
-            "arm_elbow_flex": 0.0,
-            "arm_wrist_flex": 0.0,
-            "arm_wrist_roll": 0.0,
-            "arm_gripper": 0.0,
+            "arm_shoulder_pan": None,
+            "arm_shoulder_lift": None,
+            "arm_elbow_flex": None,
+            "arm_wrist_flex": None,
+            "arm_wrist_roll": None,
+            "arm_gripper": None,
         }
+        self.initialized = False
 
         # Base velocity state
         self.base_velocities = {
@@ -188,7 +189,7 @@ class XboxTeleop(Teleoperator):
         """No additional configuration needed for Xbox controller."""
         pass
 
-    def get_action(self) -> dict[str, Any]:
+    def get_action(self, observation: dict = None) -> dict[str, Any]:
         """
         Read Xbox controller input and convert to robot action commands.
 
@@ -231,7 +232,39 @@ class XboxTeleop(Teleoperator):
             "RS": self.controller.get_button(9),  # Right stick press
         }
 
-        # ===== ARM CONTROL =====
+        # ===== ARM CONTROL (Fixed initialization and limits) =====
+
+        # Initialize arm positions from robot observation on first call
+        if not self.initialized and observation is not None:
+            print("Initializing arm positions from robot observation...")
+            for joint in ["arm_shoulder_pan", "arm_shoulder_lift", "arm_elbow_flex",
+                         "arm_wrist_flex", "arm_wrist_roll", "arm_gripper"]:
+                key_with_suffix = f"{joint}.pos"
+                if key_with_suffix in observation:
+                    self.arm_positions[joint] = observation[key_with_suffix]
+                    print(f"  {joint}: {observation[key_with_suffix]:.3f}")
+                elif joint in observation:
+                    self.arm_positions[joint] = observation[joint]
+                    print(f"  {joint}: {observation[joint]:.3f}")
+                else:
+                    # Fallback to zero if not found
+                    self.arm_positions[joint] = 0.0
+                    print(f"  {joint}: 0.0 (fallback)")
+            self.initialized = True
+            print("Arm positions initialized!")
+
+        # Skip control if not initialized yet
+        if not self.initialized:
+            return {
+                "arm_shoulder_pan": 0.0,
+                "arm_shoulder_lift": 0.0,
+                "arm_elbow_flex": 0.0,
+                "arm_wrist_flex": 0.0,
+                "arm_wrist_roll": 0.0,
+                "arm_gripper": 0.0,
+                **self.base_velocities,
+            }
+
         # Left stick controls wrist (roll and flex)
         arm_delta = {}
         arm_delta["arm_wrist_roll"] = lx * self.config.arm_speed * self.arm_speed_multiplier
@@ -242,28 +275,25 @@ class XboxTeleop(Teleoperator):
         arm_delta["arm_shoulder_lift"] = dpad_y * self.config.arm_speed * self.arm_speed_multiplier
 
         # Elbow flex: Left stick X, but ONLY when LS (left stick press) is held
-        # When LS is NOT held, left stick X controls wrist roll instead
         if buttons["LS"]:
-            # LS pressed: left stick X controls elbow flex proportionally
             arm_delta["arm_elbow_flex"] = lx * self.config.arm_speed * self.arm_speed_multiplier
         else:
             arm_delta["arm_elbow_flex"] = 0.0
 
         # Gripper control: Analog triggers LT (decrease) and RT (increase)
-        # Triggers range from 0 to 1, so (rt - lt) gives range [-1, 1]
         arm_delta["arm_gripper"] = (rt - lt) * self.config.gripper_speed
 
-        # Update arm positions
+        # Update arm positions with much more generous limits
         for joint, delta in arm_delta.items():
             self.arm_positions[joint] += delta
-            # Clamp to reasonable ranges (adjust as needed for your robot)
+            # Much more generous limits - most robot joints can move more than ±180°
             if joint == "arm_gripper":
                 self.arm_positions[joint] = np.clip(
-                    self.arm_positions[joint], -1.0, 1.0
+                    self.arm_positions[joint], -2.0, 2.0  # Expanded gripper range
                 )
             else:
                 self.arm_positions[joint] = np.clip(
-                    self.arm_positions[joint], -np.pi, np.pi
+                    self.arm_positions[joint], -2*np.pi, 2*np.pi  # ±720° instead of ±180°
                 )
 
         # ===== BASE CONTROL =====
