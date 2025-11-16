@@ -110,6 +110,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so101_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
+from lerobot.teleoperators.xbox.teleop_xbox import XboxTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
@@ -269,7 +270,7 @@ def record_loop(
                 for t in teleop
                 if isinstance(
                     t,
-                    (so100_leader.SO100Leader | so101_leader.SO101Leader | koch_leader.KochLeader),
+                    (so100_leader.SO100Leader | so101_leader.SO101Leader | koch_leader.KochLeader | XboxTeleop),
                 )
             ),
             None,
@@ -277,7 +278,7 @@ def record_loop(
 
         if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and robot.name == "lekiwi_client"):
             raise ValueError(
-                "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
+                "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator (Leader arm or Xbox). Currently only supported for LeKiwi robot."
             )
 
     # Reset policy and processor if they are provided
@@ -327,10 +328,29 @@ def record_loop(
 
         elif policy is None and isinstance(teleop, list):
             arm_action = teleop_arm.get_action()
-            arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+
+            # Format arm action based on teleoperator type
+            if isinstance(teleop_arm, XboxTeleop):
+                # Xbox outputs arm joints without suffix, add .pos suffix for LeKiwiClient
+                arm_action = {f"{k}.pos": v for k, v in arm_action.items() if k.startswith("arm_")}
+                # Also get base control from Xbox right stick
+                base_keys = ["x.vel", "y.vel", "theta.vel"]
+                xbox_base_action = {k: v for k, v in teleop_arm.get_action().items() if k in base_keys}
+            else:
+                # Leader arm outputs arm joints, add arm_ prefix
+                arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+                xbox_base_action = {}
+
             keyboard_action = teleop_keyboard.get_action()
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
-            act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+
+            # Combine base actions (keyboard takes priority if both present)
+            if len(base_action) > 0:
+                final_base_action = base_action
+            else:
+                final_base_action = xbox_base_action
+
+            act = {**arm_action, **final_base_action} if len(final_base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
             logging.info(

@@ -15,15 +15,19 @@
 # limitations under the License.
 
 """
-Hybrid data recording script: Xbox controller for arm + Keyboard for base.
+Hybrid data recording script: Leader arm OR Xbox controller for arm + Keyboard for base.
 
-Records demonstration episodes combining Xbox controller arm control with keyboard base control.
+Records demonstration episodes combining leader arm or Xbox controller arm control with keyboard base control.
+
+Set USE_LEADER_ARM = True to use the leader arm, or False to use Xbox controller.
 
 Usage:
     1. On the robot, run:
        python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
 
-    2. Connect your Xbox controller via USB or Bluetooth
+    2. Connect your teleoperator:
+       - For leader arm: Connect SO100 leader arm via USB
+       - For Xbox controller: Connect Xbox controller via USB or Bluetooth
 
     3. On your laptop/client, edit configuration below, then run:
        python examples/lekiwi/record_xbox_hybrid.py
@@ -36,11 +40,15 @@ from lerobot.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
 from lerobot.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
+from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 from lerobot.teleoperators.xbox import XboxTeleop, XboxTeleopConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
+
+# Configuration: Set to True to use leader arm, False for Xbox controller
+USE_LEADER_ARM = True
 
 NUM_EPISODES = 2
 FPS = 30
@@ -51,12 +59,20 @@ HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
 
 # Create the robot and teleoperator configurations
 robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
-xbox_config = XboxTeleopConfig(id="my_xbox_controller")
 keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
+
+# Initialize based on chosen arm control method
+if USE_LEADER_ARM:
+    arm_teleop_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
+    arm_teleop = SO100Leader(arm_teleop_config)
+    arm_teleop_name = "Leader arm"
+else:
+    arm_teleop_config = XboxTeleopConfig(id="my_xbox_controller")
+    arm_teleop = XboxTeleop(arm_teleop_config)
+    arm_teleop_name = "Xbox controller"
 
 # Initialize the robot and teleoperator
 robot = LeKiwiClient(robot_config)
-xbox = XboxTeleop(xbox_config)
 keyboard = KeyboardTeleop(keyboard_config)
 
 # TODO(Steven): Update this example to use pipelines
@@ -81,17 +97,18 @@ dataset = LeRobotDataset.create(
 # To connect you already should have this script running on LeKiwi:
 # `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
 robot.connect()
-xbox.connect()
+arm_teleop.connect()
 keyboard.connect()
 
 # Initialize the keyboard listener and rerun visualization
 listener, events = init_keyboard_listener()
-init_rerun(session_name="lekiwi_record_xbox_hybrid")
+session_name = "lekiwi_record_leader_hybrid" if USE_LEADER_ARM else "lekiwi_record_xbox_hybrid"
+init_rerun(session_name=session_name)
 
-if not robot.is_connected or not xbox.is_connected or not keyboard.is_connected:
+if not robot.is_connected or not arm_teleop.is_connected or not keyboard.is_connected:
     raise ValueError("Robot or teleoperators are not connected!")
 
-print("Starting record loop with Xbox arm + Keyboard base...")
+print(f"Starting record loop with {arm_teleop_name} arm + Keyboard base...")
 recorded_episodes = 0
 while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Recording episode {recorded_episodes}")
@@ -102,7 +119,7 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
         events=events,
         fps=FPS,
         dataset=dataset,
-        teleop=[xbox, keyboard],
+        teleop=[arm_teleop, keyboard],
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
         display_data=True,
@@ -120,7 +137,7 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
             robot=robot,
             events=events,
             fps=FPS,
-            teleop=[xbox, keyboard],
+            teleop=[arm_teleop, keyboard],
             control_time_s=RESET_TIME_SEC,
             single_task=TASK_DESCRIPTION,
             display_data=True,
@@ -143,7 +160,7 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
 # Clean up
 log_say("Stop recording")
 robot.disconnect()
-xbox.disconnect()
+arm_teleop.disconnect()
 keyboard.disconnect()
 listener.stop()
 
