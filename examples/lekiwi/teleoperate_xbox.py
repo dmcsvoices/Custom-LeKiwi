@@ -34,27 +34,32 @@ Usage:
 
 Controller Layout:
     Left Stick:
-        - X-axis: Arm wrist roll (left/right)
+        - X-axis: Arm wrist roll (left/right) / Arm elbow flex when LS pressed
         - Y-axis: Arm wrist flex (up/down)
 
-    Right Stick:
-        - X-axis: Base rotation (left/right)
-        - Y-axis: Base forward/backward movement
+    Right Stick (Base Control):
+        - X-axis: Base rotation (left/right) OR left/right strafe (toggle with RS)
+        - Y-axis: Base forward/backward movement (always active)
 
-    D-Pad:
-        - Up/Down: Arm shoulder pan (forward/backward)
-        - Left/Right: Arm elbow flex (out/in)
+    D-Pad (Arm Control):
+        - Left/Right: Arm shoulder pan (left/right)
+        - Up/Down: Arm shoulder lift (up/down)
 
-    Triggers:
-        - LT: Decrease gripper
-        - RT: Increase gripper
+    Analog Triggers:
+        - LT: Decrease gripper (proportional)
+        - RT: Increase gripper (proportional)
 
-    Buttons:
-        - LB: Arm move slower
-        - RB: Arm move faster
+    Stick & Shoulder Buttons:
+        - LS: Left stick press to control elbow flex (left stick X becomes elbow)
+        - RS: Right stick press to toggle base mode (rotation ↔ strafe)
+        - RB: Speed multiplier (2x arm speed)
+
+    Face Buttons:
         - B: Emergency stop
+
+    Menu Buttons:
         - Back: Quit
-        - Start: Reset arm (if available)
+        - Start: Reset arm to home position
 """
 
 import time
@@ -88,11 +93,13 @@ if not robot.is_connected or not xbox.is_connected:
 
 print("Starting Xbox controller teleoperation...")
 print("\nController mappings:")
-print("  Left Stick: Arm wrist control")
-print("  Right Stick: Base translation & rotation")
-print("  D-Pad: Arm shoulder & elbow control")
-print("  Triggers: Gripper control")
-print("  LB/RB: Arm speed modulation")
+print("  Left Stick: Wrist roll (X) & wrist flex (Y)")
+print("  Left Stick Press (LS): Hold to control elbow flex with left stick X")
+print("  Right Stick: Rotation (X) OR strafe (X) & forward/backward (Y)")
+print("  Right Stick Press (RS): Toggle between rotation and strafe modes")
+print("  D-Pad: Shoulder pan (left/right) & shoulder lift (up/down)")
+print("  LT/RT: Gripper decrease/increase (proportional)")
+print("  RB: Speed multiplier (2x arm speed)")
 print("  Back: Quit")
 print()
 print("SAFETY NOTE: Deadzone of 0.1 ensures untouched sticks produce NO motion.")

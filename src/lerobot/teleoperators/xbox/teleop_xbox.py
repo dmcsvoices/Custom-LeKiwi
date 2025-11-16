@@ -33,29 +33,35 @@ class XboxTeleop(Teleoperator):
     Controller Mapping:
         Left Stick:
             - X-axis: Arm wrist roll (left/right)
-            - Y-axis: Arm shoulder lift (up/down)
+            - Y-axis: Arm wrist flex (up/down)
 
-        Right Stick:
-            - X-axis: Base rotation (left/right)
-            - Y-axis: Base forward/backward movement
+        Right Stick (Base Control):
+            - X-axis: Base rotation (left/right) in rotation mode, or left/right strafe in strafe mode
+            - Y-axis: Base forward/backward movement (always active)
+            - RS Press: Toggle between rotation mode (default) and strafe mode
 
-        D-Pad:
-            - Up/Down: Arm shoulder pan (forward/backward)
-            - Left/Right: Arm elbow flex (out/in)
+        D-Pad (Arm Control):
+            - Left/Right: Arm shoulder pan (left/right)
+            - Up/Down: Arm shoulder lift (up/down)
 
-        Triggers:
-            - LT: Decrease gripper
-            - RT: Increase gripper
+        Analog Triggers:
+            - LT: Gripper decrease (proportional)
+            - RT: Gripper increase (proportional)
 
-        Buttons:
+        Stick Press & Shoulder Buttons:
+            - LS: Left stick press to control elbow flex (proportional, via left stick X)
+            - RS: Right stick press to toggle base mode (rotation ↔ strafe)
+            - RB: Speed multiplier (2x arm speed)
+
+        Face Buttons:
             - A: (Reserved)
             - B: Emergency stop
             - X: (Reserved)
             - Y: (Reserved)
-            - LB: Arm move slower
-            - RB: Arm move faster
-            - Back: Quit
-            - Start: Reset to home position
+
+        Menu Buttons:
+            - Back: Quit teleoperation
+            - Start: Reset arm to home position
     """
 
     config_class = XboxTeleopConfig
@@ -89,6 +95,10 @@ class XboxTeleop(Teleoperator):
 
         # Speed multiplier for arm movements
         self.arm_speed_multiplier = 1.0
+
+        # Base mode tracking: False = rotation mode (default), True = strafe mode
+        self.base_strafe_mode = False
+        self.last_rs_state = False  # Track previous RS button state for edge detection
 
     @property
     def action_features(self) -> dict:
@@ -217,6 +227,8 @@ class XboxTeleop(Teleoperator):
             "RB": self.controller.get_button(5),
             "Back": self.controller.get_button(6),
             "Start": self.controller.get_button(7),
+            "LS": self.controller.get_button(8),  # Left stick press
+            "RS": self.controller.get_button(9),  # Right stick press
         }
 
         # ===== ARM CONTROL =====
@@ -225,16 +237,20 @@ class XboxTeleop(Teleoperator):
         arm_delta["arm_wrist_roll"] = lx * self.config.arm_speed * self.arm_speed_multiplier
         arm_delta["arm_wrist_flex"] = -ly * self.config.arm_speed * self.arm_speed_multiplier
 
-        # D-Pad controls shoulder pan and elbow
+        # D-Pad controls shoulder pan (left/right) and shoulder lift (up/down)
         arm_delta["arm_shoulder_pan"] = dpad_x * self.config.arm_speed * self.arm_speed_multiplier
-        arm_delta["arm_elbow_flex"] = dpad_y * self.config.arm_speed * self.arm_speed_multiplier
+        arm_delta["arm_shoulder_lift"] = dpad_y * self.config.arm_speed * self.arm_speed_multiplier
 
-        # Shoulder lift: Right stick Y (inverted)
-        arm_delta["arm_shoulder_lift"] = (
-            -ry * self.config.arm_speed * self.arm_speed_multiplier
-        )
+        # Elbow flex: Left stick X, but ONLY when LS (left stick press) is held
+        # When LS is NOT held, left stick X controls wrist roll instead
+        if buttons["LS"]:
+            # LS pressed: left stick X controls elbow flex proportionally
+            arm_delta["arm_elbow_flex"] = lx * self.config.arm_speed * self.arm_speed_multiplier
+        else:
+            arm_delta["arm_elbow_flex"] = 0.0
 
-        # Gripper control: Triggers
+        # Gripper control: Analog triggers LT (decrease) and RT (increase)
+        # Triggers range from 0 to 1, so (rt - lt) gives range [-1, 1]
         arm_delta["arm_gripper"] = (rt - lt) * self.config.gripper_speed
 
         # Update arm positions
@@ -251,22 +267,36 @@ class XboxTeleop(Teleoperator):
                 )
 
         # ===== BASE CONTROL =====
-        # Right stick X controls rotation
-        self.base_velocities["theta.vel"] = (
-            rx * self.config.base_angular_vel * self.config.stick_scale
-        )
-        # Right stick Y controls forward/backward (inverted: up = negative Y)
+        # Right stick press (RS) toggles between rotation and strafe modes
+        # Use edge detection to toggle only on button press (not every frame)
+        if buttons["RS"] and not self.last_rs_state:
+            # RS button just pressed - toggle mode
+            self.base_strafe_mode = not self.base_strafe_mode
+        self.last_rs_state = buttons["RS"]
+
+        # Right stick Y always controls forward/backward movement
         self.base_velocities["x.vel"] = (
             -ry * self.config.base_linear_vel * self.config.stick_scale
         )
-        # Left stick X could control strafing if supported
-        self.base_velocities["y.vel"] = 0.0
 
-        # Speed multiplier buttons
+        # Right stick X mode depends on strafe_mode
+        if self.base_strafe_mode:
+            # Strafe mode: right stick X controls left/right strafing
+            self.base_velocities["y.vel"] = (
+                rx * self.config.base_linear_vel * self.config.stick_scale
+            )
+            self.base_velocities["theta.vel"] = 0.0
+        else:
+            # Rotation mode (default): right stick X controls rotation
+            # REVERSED: positive rx (right) = positive rotation (counter-clockwise in standard math, but left in robot frame)
+            self.base_velocities["theta.vel"] = (
+                -rx * self.config.base_angular_vel * self.config.stick_scale
+            )
+            self.base_velocities["y.vel"] = 0.0
+
+        # Speed multiplier: RB = faster (always available)
         if buttons["RB"]:  # RB = faster
             self.arm_speed_multiplier = 2.0
-        elif buttons["LB"]:  # LB = slower
-            self.arm_speed_multiplier = 0.5
         else:
             self.arm_speed_multiplier = 1.0
 
