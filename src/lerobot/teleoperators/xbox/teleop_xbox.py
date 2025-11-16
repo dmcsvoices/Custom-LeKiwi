@@ -313,7 +313,7 @@ class XboxTeleop(Teleoperator):
         if self.base_strafe_mode:
             # Strafe mode: right stick X controls left/right strafing
             self.base_velocities["y.vel"] = (
-                rx * self.config.base_linear_vel * self.config.stick_scale
+                -rx * self.config.base_linear_vel * self.config.stick_scale
             )
             self.base_velocities["theta.vel"] = 0.0
         else:
