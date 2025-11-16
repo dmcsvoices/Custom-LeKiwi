@@ -327,15 +327,20 @@ def record_loop(
             act_processed_teleop = teleop_action_processor((act, obs))
 
         elif policy is None and isinstance(teleop, list):
-            arm_action = teleop_arm.get_action()
+            # Get arm action - pass observation for Xbox initialization
+            if isinstance(teleop_arm, XboxTeleop):
+                full_xbox_action = teleop_arm.get_action(obs)
+                arm_action = full_xbox_action
+            else:
+                arm_action = teleop_arm.get_action()
 
             # Format arm action based on teleoperator type
             if isinstance(teleop_arm, XboxTeleop):
                 # Xbox outputs arm joints without suffix, add .pos suffix for LeKiwiClient
-                arm_action = {f"{k}.pos": v for k, v in arm_action.items() if k.startswith("arm_")}
+                arm_action = {f"{k}.pos": v for k, v in full_xbox_action.items() if k.startswith("arm_")}
                 # Also get base control from Xbox right stick
                 base_keys = ["x.vel", "y.vel", "theta.vel"]
-                xbox_base_action = {k: v for k, v in teleop_arm.get_action().items() if k in base_keys}
+                xbox_base_action = {k: v for k, v in full_xbox_action.items() if k in base_keys}
             else:
                 # Leader arm outputs arm joints, add arm_ prefix
                 arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
