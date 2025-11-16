@@ -54,8 +54,8 @@ from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 FPS = 30
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="localhost", id="my_lekiwi")
-leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
+robot_config = LeKiwiClientConfig(remote_ip="192.168.8.157", id="my_lekiwi")
+leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem58FD0173401", id="my_awesome_leader_arm")
 xbox_config = XboxTeleopConfig(id="my_xbox_controller")
 
 # Initialize the robot and teleoperators
@@ -96,8 +96,8 @@ try:
         arm_action = leader_arm.get_action()
         arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
 
-        # Get Xbox action (for base movement only)
-        xbox_action = xbox.get_action()
+        # Get Xbox action (for base movement only) - pass observation for initialization
+        xbox_action = xbox.get_action(observation)
         base_keys = ["x.vel", "y.vel", "theta.vel"]
         base_action = {k: v for k, v in xbox_action.items() if k in base_keys}
 
