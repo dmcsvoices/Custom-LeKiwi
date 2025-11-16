@@ -199,8 +199,8 @@ class XboxTeleop(Teleoperator):
         ly = self._apply_deadzone(self.controller.get_axis(1))  # Left stick Y
         rx = self._apply_deadzone(self.controller.get_axis(2))  # Right stick X
         ry = self._apply_deadzone(self.controller.get_axis(3))  # Right stick Y
-        lt = max(0.0, self.controller.get_axis(2))  # Left trigger (map to axis 2)
-        rt = max(0.0, self.controller.get_axis(5))  # Right trigger (map to axis 5)
+        lt = self._apply_deadzone(max(0.0, self.controller.get_axis(4)))  # Left trigger (axis 4)
+        rt = self._apply_deadzone(max(0.0, self.controller.get_axis(5)))  # Right trigger (axis 5)
 
         # Read D-Pad (hat)
         dpad_x, dpad_y = 0, 0
@@ -329,7 +329,16 @@ class XboxTeleop(Teleoperator):
         }
 
     def _apply_deadzone(self, value: float) -> float:
-        """Apply deadzone to analog stick input to prevent drift."""
+        """
+        Apply deadzone to analog stick input to prevent drift.
+
+        This ensures that untouched sticks (which may have slight electrical noise)
+        return exactly 0.0, preventing unintended robot motion.
+        """
         if abs(value) < self.config.deadzone:
             return 0.0
-        return value
+        # For values outside deadzone, scale to remove the deadzone offset
+        # This provides more responsive control near the edges
+        sign = 1.0 if value >= 0.0 else -1.0
+        scaled_value = (abs(value) - self.config.deadzone) / (1.0 - self.config.deadzone)
+        return sign * scaled_value

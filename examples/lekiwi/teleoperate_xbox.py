@@ -67,7 +67,7 @@ from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 FPS = 30
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="my_lekiwi")
+robot_config = LeKiwiClientConfig(remote_ip="localhost", id="my_lekiwi")
 xbox_config = XboxTeleopConfig(id="my_xbox_controller")
 
 # Initialize the robot and teleoperator
@@ -95,6 +95,8 @@ print("  Triggers: Gripper control")
 print("  LB/RB: Arm speed modulation")
 print("  Back: Quit")
 print()
+print("SAFETY NOTE: Deadzone of 0.1 ensures untouched sticks produce NO motion.")
+print("Keep controller idle for no motion. Press Back to exit safely.")
 
 try:
     while True:
@@ -106,8 +108,9 @@ try:
         # Get Xbox controller action (includes arm and base)
         xbox_action = xbox.get_action()
 
-        # Create action with proper prefix for arm joints
-        action = {f"arm_{k}": v for k, v in xbox_action.items() if k.startswith("arm_")}
+        # Create action with proper key format for LeKiwiClient
+        # Xbox outputs arm joints without suffix, but LeKiwiClient expects ".pos" suffix
+        action = {f"{k}.pos": v for k, v in xbox_action.items() if k.startswith("arm_")}
         action.update({k: v for k, v in xbox_action.items() if k in ["x.vel", "y.vel", "theta.vel"]})
 
         # Send action to robot
