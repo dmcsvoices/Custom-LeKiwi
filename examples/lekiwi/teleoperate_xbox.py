@@ -72,7 +72,7 @@ from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 FPS = 30
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="localhost", id="my_lekiwi")
+robot_config = LeKiwiClientConfig(remote_ip="192.168.8.157", id="my_lekiwi")
 xbox_config = XboxTeleopConfig(id="my_xbox_controller")
 
 # Initialize the robot and teleoperator
@@ -102,8 +102,11 @@ print("  LT/RT: Gripper decrease/increase (proportional)")
 print("  RB: Speed multiplier (2x arm speed)")
 print("  Back: Quit")
 print()
+print("INITIALIZATION: Robot will initialize from current arm position on first loop.")
 print("SAFETY NOTE: Deadzone of 0.1 ensures untouched sticks produce NO motion.")
 print("Keep controller idle for no motion. Press Back to exit safely.")
+print()
+print("Starting control loop...")
 
 try:
     while True:
@@ -112,8 +115,8 @@ try:
         # Get robot observation
         observation = robot.get_observation()
 
-        # Get Xbox controller action (includes arm and base)
-        xbox_action = xbox.get_action()
+        # Get Xbox controller action (includes arm and base) - pass observation for initialization
+        xbox_action = xbox.get_action(observation)
 
         # Create action with proper key format for LeKiwiClient
         # Xbox outputs arm joints without suffix, but LeKiwiClient expects ".pos" suffix
