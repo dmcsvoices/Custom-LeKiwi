@@ -281,6 +281,13 @@ def record_loop(
                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator (Leader arm or Xbox). Currently only supported for LeKiwi robot."
             )
 
+        # Warn if keyboard teleop exists but failed to connect
+        if teleop_keyboard and not teleop_keyboard.is_connected:
+            logging.warning(
+                "KeyboardTeleop was provided but failed to connect. Keyboard base control will be disabled. "
+                "If using Xbox for arm control, base control from Xbox right stick will still be available."
+            )
+
     # Reset policy and processor if they are provided
     if policy is not None and preprocessor is not None and postprocessor is not None:
         policy.reset()
@@ -346,8 +353,12 @@ def record_loop(
                 arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
                 xbox_base_action = {}
 
-            keyboard_action = teleop_keyboard.get_action()
-            base_action = robot._from_keyboard_to_base_action(keyboard_action)
+            # Get keyboard action only if keyboard is connected
+            if teleop_keyboard.is_connected:
+                keyboard_action = teleop_keyboard.get_action()
+                base_action = robot._from_keyboard_to_base_action(keyboard_action)
+            else:
+                base_action = {}
 
             # Combine base actions (keyboard takes priority if both present)
             if len(base_action) > 0:

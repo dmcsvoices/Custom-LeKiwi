@@ -44,17 +44,23 @@ Xbox Controller Layout (for base movement only):
 """
 
 import time
-
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
+from lerobot.cameras.configs import ColorMode, Cv2Rotation
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 from lerobot.teleoperators.xbox import XboxTeleop, XboxTeleopConfig
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
-FPS = 30
+
+FPS=30
+
+robot_config = LeKiwiClientConfig(remote_ip="192.168.8.157", id="my_lekiwi")
+
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="192.168.8.157", id="my_lekiwi")
+#robot_config = LeKiwiClientConfig(remote_ip="192.168.8.157", id="my_lekiwi")
 leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem58FD0173401", id="my_awesome_leader_arm")
 xbox_config = XboxTeleopConfig(id="my_xbox_controller")
 
