@@ -24,7 +24,9 @@
 
 This is a **custom fork** of the [HuggingFace LeRobot](https://github.com/huggingface/lerobot) project, specifically enhanced for the **LeKiwi mobile robot** with **dual motor control board support**.
 
-### Key Enhancement: Dual Motor Controller Architecture
+### Key Enhancements
+
+#### 1. Dual Motor Controller Architecture
 
 The standard LeKiwi assumes all motors (arm + base) are connected to a **single motor control board**. This fork adds support for **two independent motor control boards**, enabling:
 
@@ -33,6 +35,15 @@ The standard LeKiwi assumes all motors (arm + base) are connected to a **single 
 ✅ **Better Performance**: Dedicated control board per motor group reduces communication overhead
 ✅ **Auto-Detection**: Automatically detects which USB port has which board
 ✅ **Backwards Compatible**: Single-board mode still works perfectly
+
+#### 2. 9D Action Space for Mobile Manipulation 🆕
+
+This fork includes critical fixes for training models with **full 9D action control** (6 arm joints + 3 base velocities):
+
+✅ **Full Mobile Manipulation**: Train models that control both arm AND base simultaneously
+✅ **6D→9D Model Adaptation**: Fine-tune pretrained arm-only models for full robot control
+✅ **Automatic Feature Override**: Policy factory correctly handles action space mismatches
+✅ **3-Camera Vision**: Multi-camera support for better spatial awareness
 
 ### Why This Matters
 
@@ -56,6 +67,7 @@ The standard LeKiwi assumes all motors (arm + base) are connected to a **single 
 - [Quick Start](#-quick-start)
 - [Calibration](#-calibration)
 - [Teleoperation](#-teleoperation)
+- [Training with 9D Actions](#-training-with-9d-actions)
 - [Troubleshooting](#-troubleshooting)
 - [Original LeRobot Features](#-original-lerobot-features)
 - [Contributing](#-contributing)
@@ -345,6 +357,184 @@ python examples/lekiwi/teleoperate.py
 - Default: 500 ms
 - Stops base motors if no command received
 - Adjust with `--host.watchdog_timeout_ms=<milliseconds>`
+
+---
+
+## 🎓 Training with 9D Actions
+
+### Overview
+
+This fork includes critical fixes that enable training models with **full 9D action space** control (6 arm joints + 3 base velocities). Previously, models trained from pretrained checkpoints would ignore base velocities and only learn arm control.
+
+### The Problem (Now Fixed!)
+
+**Before this fix:**
+- When fine-tuning a pretrained arm-only model (6D) with a dataset containing arm+base data (9D)
+- The policy factory would keep the pretrained model's 6D action space
+- Base velocities (`x.vel`, `y.vel`, `theta.vel`) were **ignored during training**
+- Result: Models could only control the arm, not the base
+
+**After this fix:**
+- Policy factory automatically detects action dimension mismatches
+- Overrides input/output features to match the dataset's action space
+- Vision and language model weights are preserved from pretrained checkpoint
+- Action prediction head is reinitialized for the new 9D action space
+- Result: Models learn to control **both arm AND base**
+
+### Action Space Format
+
+**6D Actions** (Arm Only):
+```python
+{
+    "arm_shoulder_pan": float,   # radians
+    "arm_shoulder_lift": float,  # radians
+    "arm_elbow_flex": float,     # radians
+    "arm_wrist_flex": float,     # radians
+    "arm_wrist_roll": float,     # radians
+    "arm_gripper": float,        # -1.0 to 1.0
+}
+```
+
+**9D Actions** (Full Mobile Manipulation):
+```python
+{
+    "arm_shoulder_pan": float,   # radians
+    "arm_shoulder_lift": float,  # radians
+    "arm_elbow_flex": float,     # radians
+    "arm_wrist_flex": float,     # radians
+    "arm_wrist_roll": float,     # radians
+    "arm_gripper": float,        # -1.0 to 1.0
+    "x.vel": float,              # m/s (forward/backward)
+    "y.vel": float,              # m/s (strafe left/right)
+    "theta.vel": float,          # deg/s (rotation)
+}
+```
+
+### Training with 9D Actions
+
+**Step 1: Record Dataset with Base Movement**
+
+Ensure your demonstrations include base movement:
+
+```bash
+# Record with Xbox controller (arm + base control)
+python examples/lekiwi/record_xbox_hybrid.py
+```
+
+**Step 2: Verify Dataset Contains 9D Actions**
+
+```bash
+# Check dataset action dimensions
+python examples/lekiwi/check_dataset_actions.py
+
+# Analyze base movement statistics
+python examples/lekiwi/analyze_base_movement.py
+```
+
+Expected output:
+```
+✓ Dataset contains 9D actions
+✓ Base movement detected in X% of frames
+```
+
+**Step 3: Train with Pretrained Model**
+
+The fix in `src/lerobot/policies/factory.py` automatically handles dimension adaptation:
+
+```bash
+python lerobot/scripts/train.py \
+    --policy.type=smolvla \
+    --policy.pretrained_path=lerobot/smolvla_base \
+    --dataset.repo_id=your_username/your_9d_dataset \
+    --training.batch_size=64 \
+    --training.num_steps=20000
+```
+
+**What happens automatically:**
+1. ✅ Pretrained vision encoder loaded (frozen or fine-tuned)
+2. ✅ Pretrained language model loaded (frozen or fine-tuned)
+3. ✅ Action prediction head **reinitialized** for 9D output
+4. ✅ Model trains on all 9 dimensions from your dataset
+
+**Step 4: Verify Training Configuration**
+
+```bash
+# Verify model is configured for 9D
+python examples/lekiwi/verify_9d_training.py
+```
+
+Expected output:
+```
+✓ SUCCESS: Model configured with 9D actions
+  ✓ Output features: 9 dimensions
+  ✓ Will train on: 6 arm joints + 3 base velocities
+```
+
+### Using 6D Models with 9D Robot
+
+If you already have a trained 6D model and want to use it with the 9D robot, use the `ActionPaddingWrapper`:
+
+```python
+from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+# Load 6D arm-only model
+base_policy = SmolVLAPolicy.from_pretrained("your_username/arm_only_model")
+
+# Wrap to pad 6D output to 9D (base velocities will be zero)
+from examples.lekiwi.evaluate import ActionPaddingWrapper
+policy = ActionPaddingWrapper(base_policy, target_action_dim=9)
+
+# Use with robot - arm will move, base will stay stationary
+```
+
+**Note:** The wrapped model can control the arm but **not** the base. To get base control, you must train a model with 9D data.
+
+### 3-Camera Configuration
+
+This fork also includes corrected 3-camera support for better spatial awareness:
+
+**Camera Setup:**
+- **Front camera**: `/dev/video2` - Wide view of workspace (rotated 270°)
+- **Wrist camera**: `/dev/video0` - End-effector view (rotated 90°)
+- **Top camera**: `/dev/video4` - Bird's eye view (rotated 90°)
+
+Configuration is in `src/lerobot/robots/lekiwi/config_lekiwi.py`.
+
+### Documentation
+
+For detailed technical information about the 9D action space fix, see:
+- [`FIX_9D_ACTIONS.md`](FIX_9D_ACTIONS.md) - Complete technical explanation
+- [`CLAUDE.md`](CLAUDE.md) - Comprehensive development guide
+- [`examples/lekiwi/verify_9d_training.py`](examples/lekiwi/verify_9d_training.py) - Verification script
+
+### Example Training Script
+
+```bash
+#!/bin/bash
+# Train SmolVLA with 9D actions for mobile manipulation
+
+python lerobot/scripts/train.py \
+    --policy.type=smolvla \
+    --policy.pretrained_path=lerobot/smolvla_base \
+    --dataset.repo_id=your_username/mobile_manipulation_dataset \
+    --dataset.image_keys="front,wrist,top" \
+    --training.batch_size=64 \
+    --training.num_steps=20000 \
+    --training.save_freq=5000 \
+    --training.eval_freq=5000 \
+    --training.log_freq=100 \
+    --device=cuda \
+    --wandb.enable=true \
+    --wandb.project=lekiwi-mobile-manipulation
+```
+
+### Key Takeaways
+
+✅ **This fork automatically handles 6D→9D adaptation** when training
+✅ **No manual configuration needed** - the fix is transparent
+✅ **Pretrained weights are preserved** for vision and language models
+✅ **Base movement will be learned** if present in your dataset
+✅ **Verification tools included** to confirm 9D training setup
 
 ---
 
