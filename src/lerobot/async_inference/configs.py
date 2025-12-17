@@ -142,6 +142,15 @@ class RobotClientConfig:
         default=False, metadata={"help": "Visualize the action queue size"}
     )
 
+    # Real-Time Chunking (RTC) configuration
+    rtc_enabled: bool = field(default=False, metadata={"help": "Enable Real-Time Chunking for smoother motion"})
+    rtc_execution_horizon: int = field(default=10, metadata={"help": "RTC execution horizon (8-12 recommended)"})
+    rtc_max_guidance_weight: float = field(default=10.0, metadata={"help": "RTC max guidance weight (10.0 recommended for SmolVLA)"})
+    rtc_prefix_attention_schedule: str = field(
+        default="exp",
+        metadata={"help": "RTC attention schedule: linear, exp, ones, zeros (exp recommended)"}
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step, in seconds"""
@@ -171,6 +180,33 @@ class RobotClientConfig:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
+
+        # Build RTC config if enabled
+        if self.rtc_enabled:
+            from lerobot.configs.types import RTCAttentionSchedule
+            from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+            schedule_map = {
+                "linear": RTCAttentionSchedule.LINEAR,
+                "exp": RTCAttentionSchedule.EXP,
+                "ones": RTCAttentionSchedule.ONES,
+                "zeros": RTCAttentionSchedule.ZEROS,
+            }
+
+            if self.rtc_prefix_attention_schedule not in schedule_map:
+                raise ValueError(
+                    f"Invalid RTC attention schedule '{self.rtc_prefix_attention_schedule}'. "
+                    f"Must be one of: {list(schedule_map.keys())}"
+                )
+
+            self.rtc_config = RTCConfig(
+                enabled=True,
+                execution_horizon=self.rtc_execution_horizon,
+                max_guidance_weight=self.rtc_max_guidance_weight,
+                prefix_attention_schedule=schedule_map[self.rtc_prefix_attention_schedule],
+            )
+        else:
+            self.rtc_config = None
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "RobotClientConfig":

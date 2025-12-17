@@ -48,6 +48,10 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
+from lerobot.policies.rtc.action_queue import ActionQueue
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES
@@ -90,6 +94,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
 
+        # RTC-specific attributes
+        self.rtc_config: RTCConfig | None = None
+        self.rtc_processor: RTCProcessor | None = None
+        self.rtc_action_queue: ActionQueue | None = None
+        self.last_inference_start_time: float | None = None
+
     @property
     def running(self):
         return not self.shutdown_event.is_set()
@@ -106,6 +116,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         with self._predicted_timesteps_lock:
             self._predicted_timesteps = set()
+
+        # Reset RTC state
+        if self.rtc_action_queue is not None:
+            self.rtc_action_queue = ActionQueue(self.rtc_config)
+        self.last_inference_start_time = None
 
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
@@ -135,12 +150,16 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
                 f"Supported policies: {SUPPORTED_POLICIES}"
             )
 
+        # Extract RTC configuration
+        self.rtc_config = policy_specs.rtc_config
+
         self.logger.info(
             f"Receiving policy instructions from {client_id} | "
             f"Policy type: {policy_specs.policy_type} | "
             f"Pretrained name or path: {policy_specs.pretrained_name_or_path} | "
             f"Actions per chunk: {policy_specs.actions_per_chunk} | "
-            f"Device: {policy_specs.device}"
+            f"Device: {policy_specs.device} | "
+            f"RTC enabled: {self.rtc_config.enabled if self.rtc_config else False}"
         )
 
         self.device = policy_specs.device
@@ -165,6 +184,20 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             },
             postprocessor_overrides={"device_processor": device_override},
         )
+
+        # Initialize RTC components if enabled
+        if self.rtc_config and self.rtc_config.enabled:
+            self.rtc_processor = RTCProcessor(self.rtc_config)
+            self.rtc_action_queue = ActionQueue(self.rtc_config)
+            self.logger.info(
+                f"RTC enabled: execution_horizon={self.rtc_config.execution_horizon}, "
+                f"max_guidance_weight={self.rtc_config.max_guidance_weight}, "
+                f"schedule={self.rtc_config.prefix_attention_schedule.value}"
+            )
+        else:
+            self.rtc_processor = None
+            self.rtc_action_queue = None
+            self.logger.info("RTC disabled")
 
         end = time.perf_counter()
 
@@ -321,6 +354,116 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             for i, action in enumerate(action_chunk)
         ]
 
+    def _get_action_chunk_with_rtc(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Get action chunk using RTC-enhanced inference for SmolVLA.
+
+        This method replicates SmolVLA's flow-matching denoising loop but wraps the denoise_step
+        with RTCProcessor.denoise_step to apply RTC guidance based on prev_chunk_left_over.
+
+        Returns:
+            Action chunk with shape (B, actions_per_chunk, action_dim)
+        """
+        # Import make_att_2d_masks from SmolVLA
+        from lerobot.policies.smolvla.modeling_smolvla import make_att_2d_masks
+
+        # Get leftover actions from previous chunk
+        prev_chunk_left_over = self.rtc_action_queue.get_left_over()
+
+        # Compute inference delay (number of timesteps during inference)
+        if self.last_inference_start_time is not None:
+            inference_time_s = time.perf_counter() - self.last_inference_start_time
+            inference_delay = int(inference_time_s / self.config.environment_dt)
+        else:
+            inference_delay = 0  # First inference, no delay
+
+        self.logger.debug(
+            f"RTC state: prev_leftover={'None' if prev_chunk_left_over is None else prev_chunk_left_over.shape}, "
+            f"inference_delay={inference_delay}"
+        )
+
+        # Access SmolVLA's internal model (VLAFlowMatching)
+        vla_model = self.policy.model
+
+        # Prepare inputs for SmolVLA (following modeling_smolvla.py:258-262)
+        images, img_masks = self.policy.prepare_images(observation)
+        state = self.policy.prepare_state(observation)
+        lang_tokens = observation[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = observation[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        bsize = state.shape[0]
+        device = state.device
+
+        # Sample noise
+        actions_shape = (bsize, vla_model.config.chunk_size, vla_model.config.max_action_dim)
+        noise = vla_model.sample_noise(actions_shape, device)
+
+        # Embed prefix (images + language + state) - from modeling_smolvla.py:718-730
+        prefix_embs, prefix_pad_masks, prefix_att_masks = vla_model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        # Compute KV cache for prefix
+        _, past_key_values = vla_model.vlm_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=vla_model.config.use_cache,
+            fill_kv_cache=True,
+        )
+
+        # Flow-matching denoising loop with RTC guidance
+        dt = -1.0 / vla_model.config.num_steps
+        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+
+        x_t = noise
+        time_val = torch.tensor(1.0, dtype=torch.float32, device=device)
+
+        while time_val >= -dt / 2:
+            expanded_time = time_val.expand(bsize)
+
+            # Create partial function for original denoise_step
+            # This is what RTCProcessor.denoise_step expects as original_denoise_step_partial
+            def original_denoise_step_partial(x):
+                return vla_model.denoise_step(
+                    prefix_pad_masks,
+                    past_key_values,
+                    x,
+                    expanded_time,
+                )
+
+            # Apply RTC-guided denoising
+            v_t = self.rtc_processor.denoise_step(
+                x_t=x_t,
+                prev_chunk_left_over=prev_chunk_left_over,
+                inference_delay=inference_delay,
+                time=time_val,
+                original_denoise_step_partial=original_denoise_step_partial,
+                execution_horizon=self.rtc_config.execution_horizon,
+            )
+
+            # Euler step
+            x_t += dt * v_t
+            time_val += dt
+
+        # Final actions
+        actions = x_t
+
+        # Unpad actions to original action dimension
+        original_action_dim = self.policy.config.action_feature.shape[0]
+        actions = actions[:, :, :original_action_dim]
+
+        # Apply policy-specific transformations if needed
+        if self.policy.config.adapt_to_pi_aloha:
+            actions = self.policy._pi_aloha_encode_actions(actions)
+
+        # Slice to requested chunk size
+        chunk = actions[:, : self.actions_per_chunk, :]
+
+        return chunk
+
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Get an action chunk from the policy. The chunk contains only"""
         chunk = self.policy.predict_action_chunk(observation)
@@ -335,10 +478,17 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         Pipeline:
         1. Convert raw observation to LeRobot format
         2. Apply preprocessor (tokenization, normalization, batching, device placement)
-        3. Run policy inference to get action chunk
+        3. Run policy inference to get action chunk (with or without RTC)
         4. Apply postprocessor (unnormalization, device movement)
         5. Convert to TimedAction list
+        6. Update RTC action queue if enabled
         """
+        # Track inference start time for RTC latency calculation
+        self.last_inference_start_time = time.perf_counter()
+        action_index_before_inference = (
+            self.rtc_action_queue.get_action_index() if self.rtc_action_queue else None
+        )
+
         """1. Prepare observation"""
         start_prepare = time.perf_counter()
         observation: Observation = raw_observation_to_observation(
@@ -354,9 +504,21 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.last_processed_obs: TimedObservation = observation_t
         preprocessing_time = time.perf_counter() - start_preprocess
 
-        """3. Get action chunk"""
+        """3. Get action chunk (with or without RTC)"""
         start_inference = time.perf_counter()
-        action_tensor = self._get_action_chunk(observation)
+
+        # Choose inference path based on RTC config
+        if self.rtc_processor is not None:
+            # RTC-enabled inference
+            action_tensor = self._get_action_chunk_with_rtc(observation)
+
+            # Store ORIGINAL actions (before postprocessing) for RTC
+            original_actions = action_tensor.squeeze(0).clone()  # Remove batch dim
+        else:
+            # Standard inference (existing path)
+            action_tensor = self._get_action_chunk(observation)
+            original_actions = None
+
         inference_time = time.perf_counter() - start_inference
         self.logger.info(
             f"Preprocessing and inference took {inference_time:.4f}s, action shape: {action_tensor.shape}"
@@ -387,6 +549,28 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         )
         postprocess_stops = time.perf_counter()
         postprocessing_time = postprocess_stops - start_postprocess
+
+        """6. Update RTC action queue"""
+        if self.rtc_action_queue is not None:
+            # Compute real inference delay
+            inference_time_s = postprocess_stops - self.last_inference_start_time
+            real_delay = int(inference_time_s / self.config.environment_dt)
+
+            # Merge into RTC queue
+            processed_actions_tensor = action_tensor.clone()  # Already (chunk_size, action_dim)
+
+            self.rtc_action_queue.merge(
+                original_actions=original_actions,
+                processed_actions=processed_actions_tensor,
+                real_delay=real_delay,
+                action_index_before_inference=action_index_before_inference,
+            )
+
+            self.logger.debug(
+                f"RTC queue updated: real_delay={real_delay}, "
+                f"leftover_size={self.rtc_action_queue.get_left_over().shape if self.rtc_action_queue.get_left_over() is not None else 'None'}, "
+                f"queue_size={self.rtc_action_queue.qsize()}"
+            )
 
         self.logger.info(
             f"Observation {observation_t.get_timestep()} | "

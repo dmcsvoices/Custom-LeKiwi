@@ -39,6 +39,13 @@ class NormalizationMode(str, Enum):
     QUANTILE10 = "QUANTILE10"
 
 
+class RTCAttentionSchedule(str, Enum):
+    ZEROS = "ZEROS"
+    ONES = "ONES"
+    LINEAR = "LINEAR"
+    EXP = "EXP"
+
+
 @dataclass
 class PolicyFeature:
     type: FeatureType
