@@ -18,7 +18,7 @@
 Hybrid teleoperation script: Leader Arm for arm control + Xbox for base movement.
 
 This script combines a leader arm for precise arm/gripper control with Xbox controller
-for convenient base movement (translation and rotation).
+for convenient base movement (translation, rotation, and strafe).
 
 Requirements:
     pygame (for Xbox controller)
@@ -36,11 +36,16 @@ Leader Arm Layout (for arm and gripper):
     Use your leader arm's native control interface for full arm and gripper control.
 
 Xbox Controller Layout (for base movement only):
+    Left Stick:
+        - X-axis: Base strafe (left/right strafing)
+        - Y-axis: (Inactive)
+
     Right Stick:
-        - X-axis: Base rotation (left/right)
+        - X-axis: Base rotation (turn left/right)
         - Y-axis: Base forward/backward movement
 
-    Note: Other Xbox controls are not used in this hybrid mode.
+    Note: Left and right stick can be used simultaneously for combined movements
+          (e.g., moving forward while strafing and rotating).
 """
 
 import time
@@ -84,11 +89,12 @@ print("Starting hybrid teleoperation (Leader Arm for arm + Xbox for base)...")
 print("\nLeader Arm mappings:")
 print("  Full arm and gripper control via leader arm")
 print("\nXbox Controller mappings:")
-print("  Right Stick X: Base rotation (left/right)")
+print("  Left Stick X:  Base strafe (left/right strafing)")
+print("  Right Stick X: Base rotation (turn left/right)")
 print("  Right Stick Y: Base forward/backward movement")
 print()
 print("SAFETY NOTE: Deadzone of 0.1 ensures untouched sticks produce NO motion.")
-print("Keep Xbox right stick idle for no base motion.")
+print("Both sticks can be used simultaneously for combined movements.")
 print()
 
 try:

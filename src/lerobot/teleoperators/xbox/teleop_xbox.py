@@ -32,13 +32,12 @@ class XboxTeleop(Teleoperator):
 
     Controller Mapping:
         Left Stick:
-            - X-axis: Arm wrist roll (left/right)
-            - Y-axis: Arm wrist flex (up/down)
+            - X-axis: Base strafe (left/right movement)
+            - Y-axis: (Inactive in hybrid mode - arm controlled by leader)
 
         Right Stick (Base Control):
-            - X-axis: Base rotation (left/right) in rotation mode, or left/right strafe in strafe mode
-            - Y-axis: Base forward/backward movement (always active)
-            - RS Press: Toggle between rotation mode (default) and strafe mode
+            - X-axis: Base rotation (left/right)
+            - Y-axis: Base forward/backward movement
 
         D-Pad (Arm Control):
             - Left/Right: Arm shoulder pan (left/right)
@@ -50,7 +49,7 @@ class XboxTeleop(Teleoperator):
 
         Stick Press & Shoulder Buttons:
             - LS: Left stick press to control elbow flex (proportional, via left stick X)
-            - RS: Right stick press to toggle base mode (rotation ↔ strafe)
+            - RS: (Not used in hybrid mode)
             - RB: Speed multiplier (2x arm speed)
 
         Face Buttons:
@@ -62,6 +61,10 @@ class XboxTeleop(Teleoperator):
         Menu Buttons:
             - Back: Quit teleoperation
             - Start: Reset arm to home position
+
+    Note: In hybrid mode (teleoperate_xbox_hybrid.py), arm control outputs are
+          ignored since the leader arm handles all arm movements. Only base
+          velocity commands (x.vel, y.vel, theta.vel) are used.
     """
 
     config_class = XboxTeleopConfig
@@ -96,10 +99,6 @@ class XboxTeleop(Teleoperator):
 
         # Speed multiplier for arm movements
         self.arm_speed_multiplier = 1.0
-
-        # Base mode tracking: False = rotation mode (default), True = strafe mode
-        self.base_strafe_mode = False
-        self.last_rs_state = False  # Track previous RS button state for edge detection
 
     @property
     def action_features(self) -> dict:
@@ -297,32 +296,20 @@ class XboxTeleop(Teleoperator):
                 )
 
         # ===== BASE CONTROL =====
-        # Right stick press (RS) toggles between rotation and strafe modes
-        # Use edge detection to toggle only on button press (not every frame)
-        if buttons["RS"] and not self.last_rs_state:
-            # RS button just pressed - toggle mode
-            self.base_strafe_mode = not self.base_strafe_mode
-        self.last_rs_state = buttons["RS"]
+        # Left stick X controls strafe (y.vel) - left/right strafing
+        self.base_velocities["y.vel"] = (
+            -lx * self.config.base_linear_vel * self.config.stick_scale
+        )
 
-        # Right stick Y always controls forward/backward movement
+        # Right stick Y controls forward/backward movement (x.vel)
         self.base_velocities["x.vel"] = (
             -ry * self.config.base_linear_vel * self.config.stick_scale
         )
 
-        # Right stick X mode depends on strafe_mode
-        if self.base_strafe_mode:
-            # Strafe mode: right stick X controls left/right strafing
-            self.base_velocities["y.vel"] = (
-                -rx * self.config.base_linear_vel * self.config.stick_scale
-            )
-            self.base_velocities["theta.vel"] = 0.0
-        else:
-            # Rotation mode (default): right stick X controls rotation
-            # REVERSED: positive rx (right) = positive rotation (counter-clockwise in standard math, but left in robot frame)
-            self.base_velocities["theta.vel"] = (
-                -rx * self.config.base_angular_vel * self.config.stick_scale
-            )
-            self.base_velocities["y.vel"] = 0.0
+        # Right stick X controls rotation (theta.vel)
+        self.base_velocities["theta.vel"] = (
+            -rx * self.config.base_angular_vel * self.config.stick_scale
+        )
 
         # Speed multiplier: RB = faster (always available)
         if buttons["RB"]:  # RB = faster
