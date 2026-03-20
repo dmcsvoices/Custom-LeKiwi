@@ -17,21 +17,23 @@ Example:
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 
-@dataclass
-class AgentTeleopConfig:
+@dataclass(kw_only=True)
+class AgentTeleopConfig(TeleoperatorConfig):
     """Configuration for AgentTeleop.
     
     Attributes:
-        id: Unique identifier for this teleoperator instance.
-        type: Teleoperator type identifier.
+        id: Unique identifier for this teleoperator instance (inherited).
+        calibration_dir: Directory for calibration files (inherited).
         default_arm_speed: Default speed for arm movements in rad/s.
         default_base_linear_speed: Default linear speed for base in m/s.
         default_base_angular_speed: Default angular speed for base in deg/s.
@@ -40,9 +42,6 @@ class AgentTeleopConfig:
         max_base_angular_vel: Maximum allowed base angular velocity in deg/s.
         inactivity_timeout_s: Timeout in seconds after which the robot auto-stops.
     """
-    id: str = "ai_agent"
-    type: str = "agent"
-    
     # Motion parameters
     default_arm_speed: float = 0.5  # rad/s
     default_base_linear_speed: float = 0.2  # m/s
