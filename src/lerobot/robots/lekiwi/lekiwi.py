@@ -583,8 +583,11 @@ class LeKiwi(Robot):
         arm_goal_pos = {k: v for k, v in action.items() if k.endswith(".pos")}
         base_goal_vel = {k: v for k, v in action.items() if k.endswith(".vel")}
 
+        # Provide default values (0.0) for missing velocity keys
         base_wheel_goal_vel = self._body_to_wheel_raw(
-            base_goal_vel["x.vel"], base_goal_vel["y.vel"], base_goal_vel["theta.vel"]
+            base_goal_vel.get("x.vel", 0.0),
+            base_goal_vel.get("y.vel", 0.0),
+            base_goal_vel.get("theta.vel", 0.0)
         )
 
         # Cap goal position when too far away from present position.
