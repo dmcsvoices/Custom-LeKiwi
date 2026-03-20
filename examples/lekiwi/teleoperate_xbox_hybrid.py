@@ -18,7 +18,7 @@
 Hybrid teleoperation script: Leader Arm for arm control + Xbox for base movement.
 
 This script combines a leader arm for precise arm/gripper control with Xbox controller
-for convenient base movement (translation and rotation).
+for convenient base movement (translation, rotation, and strafe).
 
 Requirements:
     pygame (for Xbox controller)
@@ -36,26 +36,37 @@ Leader Arm Layout (for arm and gripper):
     Use your leader arm's native control interface for full arm and gripper control.
 
 Xbox Controller Layout (for base movement only):
+    Left Stick:
+        - X-axis: Base strafe (left/right strafing)
+        - Y-axis: (Inactive)
+
     Right Stick:
-        - X-axis: Base rotation (left/right)
+        - X-axis: Base rotation (turn left/right)
         - Y-axis: Base forward/backward movement
 
-    Note: Other Xbox controls are not used in this hybrid mode.
+    Note: Left and right stick can be used simultaneously for combined movements
+          (e.g., moving forward while strafing and rotating).
 """
 
 import time
-
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
+from lerobot.cameras.configs import ColorMode, Cv2Rotation
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 from lerobot.teleoperators.xbox import XboxTeleop, XboxTeleopConfig
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
-FPS = 30
+
+FPS=30
+
+robot_config = LeKiwiClientConfig(remote_ip="192.168.8.157", id="my_lekiwi")
+
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="localhost", id="my_lekiwi")
-leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
+#robot_config = LeKiwiClientConfig(remote_ip="192.168.8.157", id="my_lekiwi")
+leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem58FD0173401", id="my_awesome_leader_arm")
 xbox_config = XboxTeleopConfig(id="my_xbox_controller")
 
 # Initialize the robot and teleoperators
@@ -78,11 +89,12 @@ print("Starting hybrid teleoperation (Leader Arm for arm + Xbox for base)...")
 print("\nLeader Arm mappings:")
 print("  Full arm and gripper control via leader arm")
 print("\nXbox Controller mappings:")
-print("  Right Stick X: Base rotation (left/right)")
+print("  Left Stick X:  Base strafe (left/right strafing)")
+print("  Right Stick X: Base rotation (turn left/right)")
 print("  Right Stick Y: Base forward/backward movement")
 print()
 print("SAFETY NOTE: Deadzone of 0.1 ensures untouched sticks produce NO motion.")
-print("Keep Xbox right stick idle for no base motion.")
+print("Both sticks can be used simultaneously for combined movements.")
 print()
 
 try:
@@ -96,8 +108,8 @@ try:
         arm_action = leader_arm.get_action()
         arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
 
-        # Get Xbox action (for base movement only)
-        xbox_action = xbox.get_action()
+        # Get Xbox action (for base movement only) - pass observation for initialization
+        xbox_action = xbox.get_action(observation)
         base_keys = ["x.vel", "y.vel", "theta.vel"]
         base_action = {k: v for k, v in xbox_action.items() if k in base_keys}
 

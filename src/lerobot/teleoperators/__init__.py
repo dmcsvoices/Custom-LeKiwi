@@ -17,3 +17,4 @@
 from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
 from .utils import TeleopEvents, make_teleoperator_from_config
+from .xbox import XboxTeleop, XboxTeleopConfig

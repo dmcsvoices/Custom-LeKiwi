@@ -57,6 +57,7 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
+from lerobot.robots.lekiwi import LeKiwiClient  # noqa: F401
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -105,6 +106,7 @@ class RobotClient:
             lerobot_features,
             config.actions_per_chunk,
             config.policy_device,
+            rtc_config=config.rtc_config,
         )
         self.channel = grpc.insecure_channel(
             self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")

@@ -400,9 +400,12 @@ def make_policy(
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
 
-    if not cfg.output_features:
+    # IMPORTANT: Always override features from dataset/env, even for pretrained models
+    # This ensures that if you train on a dataset with different action dimensions than
+    # the pretrained model (e.g., 9D vs 6D), the model will adapt to the new dimensions
+    if not cfg.output_features or (ds_meta is not None and cfg.pretrained_path):
         cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    if not cfg.input_features:
+    if not cfg.input_features or (ds_meta is not None and cfg.pretrained_path):
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
 

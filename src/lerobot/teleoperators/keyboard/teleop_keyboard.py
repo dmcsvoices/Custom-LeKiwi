@@ -89,11 +89,25 @@ class KeyboardTeleop(Teleoperator):
 
         if PYNPUT_AVAILABLE:
             logging.info("pynput is available - enabling local keyboard listener.")
-            self.listener = keyboard.Listener(
-                on_press=self._on_press,
-                on_release=self._on_release,
-            )
-            self.listener.start()
+            try:
+                self.listener = keyboard.Listener(
+                    on_press=self._on_press,
+                    on_release=self._on_release,
+                )
+                self.listener.start()
+
+                # Give listener a moment to initialize and check if it started successfully
+                time.sleep(0.1)
+                if not self.listener.is_alive():
+                    logging.warning(
+                        "Keyboard listener failed to start. On macOS, you may need to grant "
+                        "accessibility permissions in System Preferences > Security & Privacy > "
+                        "Privacy > Accessibility. Keyboard input will be disabled."
+                    )
+                    self.listener = None
+            except Exception as e:
+                logging.warning(f"Failed to start keyboard listener: {e}. Keyboard input will be disabled.")
+                self.listener = None
         else:
             logging.info("pynput not available - skipping local keyboard listener.")
             self.listener = None

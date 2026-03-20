@@ -70,11 +70,11 @@ if ARM_CONTROL_MODE not in ["leader_arm", "xbox"]:
     raise ValueError("ARM_CONTROL_MODE must be 'leader_arm' or 'xbox'")
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
+robot_config = LeKiwiClientConfig(remote_ip="192.168.8.157", id="my_lekiwi")
 
 # Initialize arm teleoperator
 if ARM_CONTROL_MODE == "leader_arm":
-    arm_teleop_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
+    arm_teleop_config = SO100LeaderConfig(port="/dev/tty.usbmodem58FD0173401", id="my_awesome_leader_arm")
     arm_teleop = SO100Leader(arm_teleop_config)
     arm_name = "Leader arm"
 else:  # xbox

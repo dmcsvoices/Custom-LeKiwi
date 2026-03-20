@@ -32,13 +32,12 @@ class XboxTeleop(Teleoperator):
 
     Controller Mapping:
         Left Stick:
-            - X-axis: Arm wrist roll (left/right)
-            - Y-axis: Arm wrist flex (up/down)
+            - X-axis: Base strafe (left/right movement)
+            - Y-axis: (Inactive in hybrid mode - arm controlled by leader)
 
         Right Stick (Base Control):
-            - X-axis: Base rotation (left/right) in rotation mode, or left/right strafe in strafe mode
-            - Y-axis: Base forward/backward movement (always active)
-            - RS Press: Toggle between rotation mode (default) and strafe mode
+            - X-axis: Base rotation (left/right)
+            - Y-axis: Base forward/backward movement
 
         D-Pad (Arm Control):
             - Left/Right: Arm shoulder pan (left/right)
@@ -50,7 +49,7 @@ class XboxTeleop(Teleoperator):
 
         Stick Press & Shoulder Buttons:
             - LS: Left stick press to control elbow flex (proportional, via left stick X)
-            - RS: Right stick press to toggle base mode (rotation ↔ strafe)
+            - RS: (Not used in hybrid mode)
             - RB: Speed multiplier (2x arm speed)
 
         Face Buttons:
@@ -62,6 +61,10 @@ class XboxTeleop(Teleoperator):
         Menu Buttons:
             - Back: Quit teleoperation
             - Start: Reset arm to home position
+
+    Note: In hybrid mode (teleoperate_xbox_hybrid.py), arm control outputs are
+          ignored since the leader arm handles all arm movements. Only base
+          velocity commands (x.vel, y.vel, theta.vel) are used.
     """
 
     config_class = XboxTeleopConfig
@@ -76,15 +79,16 @@ class XboxTeleop(Teleoperator):
         self.pygame = None
         self._is_connected = False
 
-        # Arm state tracking
+        # Arm state tracking - initialize to None, will be set from robot observation
         self.arm_positions = {
-            "arm_shoulder_pan": 0.0,
-            "arm_shoulder_lift": 0.0,
-            "arm_elbow_flex": 0.0,
-            "arm_wrist_flex": 0.0,
-            "arm_wrist_roll": 0.0,
-            "arm_gripper": 0.0,
+            "arm_shoulder_pan": None,
+            "arm_shoulder_lift": None,
+            "arm_elbow_flex": None,
+            "arm_wrist_flex": None,
+            "arm_wrist_roll": None,
+            "arm_gripper": None,
         }
+        self.initialized = False
 
         # Base velocity state
         self.base_velocities = {
@@ -95,10 +99,6 @@ class XboxTeleop(Teleoperator):
 
         # Speed multiplier for arm movements
         self.arm_speed_multiplier = 1.0
-
-        # Base mode tracking: False = rotation mode (default), True = strafe mode
-        self.base_strafe_mode = False
-        self.last_rs_state = False  # Track previous RS button state for edge detection
 
     @property
     def action_features(self) -> dict:
@@ -188,7 +188,7 @@ class XboxTeleop(Teleoperator):
         """No additional configuration needed for Xbox controller."""
         pass
 
-    def get_action(self) -> dict[str, Any]:
+    def get_action(self, observation: dict = None) -> dict[str, Any]:
         """
         Read Xbox controller input and convert to robot action commands.
 
@@ -231,7 +231,39 @@ class XboxTeleop(Teleoperator):
             "RS": self.controller.get_button(9),  # Right stick press
         }
 
-        # ===== ARM CONTROL =====
+        # ===== ARM CONTROL (Fixed initialization and limits) =====
+
+        # Initialize arm positions from robot observation on first call
+        if not self.initialized and observation is not None:
+            print("Initializing arm positions from robot observation...")
+            for joint in ["arm_shoulder_pan", "arm_shoulder_lift", "arm_elbow_flex",
+                         "arm_wrist_flex", "arm_wrist_roll", "arm_gripper"]:
+                key_with_suffix = f"{joint}.pos"
+                if key_with_suffix in observation:
+                    self.arm_positions[joint] = observation[key_with_suffix]
+                    print(f"  {joint}: {observation[key_with_suffix]:.3f}")
+                elif joint in observation:
+                    self.arm_positions[joint] = observation[joint]
+                    print(f"  {joint}: {observation[joint]:.3f}")
+                else:
+                    # Fallback to zero if not found
+                    self.arm_positions[joint] = 0.0
+                    print(f"  {joint}: 0.0 (fallback)")
+            self.initialized = True
+            print("Arm positions initialized!")
+
+        # Skip control if not initialized yet
+        if not self.initialized:
+            return {
+                "arm_shoulder_pan": 0.0,
+                "arm_shoulder_lift": 0.0,
+                "arm_elbow_flex": 0.0,
+                "arm_wrist_flex": 0.0,
+                "arm_wrist_roll": 0.0,
+                "arm_gripper": 0.0,
+                **self.base_velocities,
+            }
+
         # Left stick controls wrist (roll and flex)
         arm_delta = {}
         arm_delta["arm_wrist_roll"] = lx * self.config.arm_speed * self.arm_speed_multiplier
@@ -242,57 +274,42 @@ class XboxTeleop(Teleoperator):
         arm_delta["arm_shoulder_lift"] = dpad_y * self.config.arm_speed * self.arm_speed_multiplier
 
         # Elbow flex: Left stick X, but ONLY when LS (left stick press) is held
-        # When LS is NOT held, left stick X controls wrist roll instead
         if buttons["LS"]:
-            # LS pressed: left stick X controls elbow flex proportionally
             arm_delta["arm_elbow_flex"] = lx * self.config.arm_speed * self.arm_speed_multiplier
         else:
             arm_delta["arm_elbow_flex"] = 0.0
 
         # Gripper control: Analog triggers LT (decrease) and RT (increase)
-        # Triggers range from 0 to 1, so (rt - lt) gives range [-1, 1]
         arm_delta["arm_gripper"] = (rt - lt) * self.config.gripper_speed
 
-        # Update arm positions
+        # Update arm positions with much more generous limits
         for joint, delta in arm_delta.items():
             self.arm_positions[joint] += delta
-            # Clamp to reasonable ranges (adjust as needed for your robot)
+            # Much more generous limits - most robot joints can move more than ±180°
             if joint == "arm_gripper":
                 self.arm_positions[joint] = np.clip(
-                    self.arm_positions[joint], -1.0, 1.0
+                    self.arm_positions[joint], -2.0, 2.0  # Expanded gripper range
                 )
             else:
                 self.arm_positions[joint] = np.clip(
-                    self.arm_positions[joint], -np.pi, np.pi
+                    self.arm_positions[joint], -2*np.pi, 2*np.pi  # ±720° instead of ±180°
                 )
 
         # ===== BASE CONTROL =====
-        # Right stick press (RS) toggles between rotation and strafe modes
-        # Use edge detection to toggle only on button press (not every frame)
-        if buttons["RS"] and not self.last_rs_state:
-            # RS button just pressed - toggle mode
-            self.base_strafe_mode = not self.base_strafe_mode
-        self.last_rs_state = buttons["RS"]
+        # Left stick X controls strafe (y.vel) - left/right strafing
+        self.base_velocities["y.vel"] = (
+            -lx * self.config.base_linear_vel * self.config.stick_scale
+        )
 
-        # Right stick Y always controls forward/backward movement
+        # Right stick Y controls forward/backward movement (x.vel)
         self.base_velocities["x.vel"] = (
             -ry * self.config.base_linear_vel * self.config.stick_scale
         )
 
-        # Right stick X mode depends on strafe_mode
-        if self.base_strafe_mode:
-            # Strafe mode: right stick X controls left/right strafing
-            self.base_velocities["y.vel"] = (
-                rx * self.config.base_linear_vel * self.config.stick_scale
-            )
-            self.base_velocities["theta.vel"] = 0.0
-        else:
-            # Rotation mode (default): right stick X controls rotation
-            # REVERSED: positive rx (right) = positive rotation (counter-clockwise in standard math, but left in robot frame)
-            self.base_velocities["theta.vel"] = (
-                -rx * self.config.base_angular_vel * self.config.stick_scale
-            )
-            self.base_velocities["y.vel"] = 0.0
+        # Right stick X controls rotation (theta.vel)
+        self.base_velocities["theta.vel"] = (
+            -rx * self.config.base_angular_vel * self.config.stick_scale
+        )
 
         # Speed multiplier: RB = faster (always available)
         if buttons["RB"]:  # RB = faster
