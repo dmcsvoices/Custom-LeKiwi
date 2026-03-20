@@ -442,18 +442,17 @@ class AgentTeleop(Teleoperator):
     # Internal methods
     
     def _get_zero_action(self) -> Dict[str, float]:
-        """Return an action dict with all zeros.
+        """Return an action dict with base velocities zeroed.
+        
+        Arm joints are NOT included by default to avoid unexpected movement.
+        Only base velocities are zeroed. Arm commands must be explicitly queued.
         
         Returns:
-            Dictionary with all action keys set to 0.0.
+            Dictionary with base velocity keys set to 0.0.
         """
         return {
-            "arm_shoulder_pan.pos": 0.0,
-            "arm_shoulder_lift.pos": 0.0,
-            "arm_elbow_flex.pos": 0.0,
-            "arm_wrist_flex.pos": 0.0,
-            "arm_wrist_roll.pos": 0.0,
-            "arm_gripper.pos": 0.0,
+            # Base velocities only - arm joints omitted to prevent
+            # automatic movement to zero position on connect
             "x.vel": 0.0,
             "y.vel": 0.0,
             "theta.vel": 0.0,
