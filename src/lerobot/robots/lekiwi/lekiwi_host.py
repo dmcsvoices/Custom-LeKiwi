@@ -63,7 +63,7 @@ def main(cfg: LeKiwiServerConfig):
     robot = LeKiwi(cfg.robot)
 
     logging.info("Connecting LeKiwi")
-    robot.connect()
+    robot.connect(calibrate=False)
 
     logging.info("Starting HostAgent")
     host = LeKiwiHost(cfg.host)
